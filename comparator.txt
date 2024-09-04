@@ -1,0 +1,212 @@
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import os
+
+""" **********************************************************************
+Author: Sourav Mantri
+Creation Date: 2022-07-07
+Desc: Compares 2 file and also returns missing rows from both the file 
+*************************************************************************
+Arguments
+=========
+df1: dataframe1
+df2: dataframe2
+join: Common key in both the dataframes.
+
+Return values
+=============
+Returns 2 csv's which would be available in Comparator_Result Folder
+1. Return Results.csv
+2. Returns Missing Rows.csv
+
+Notes
+=====
+To run this script make sure both the dataframes should have same column name.
+
+Change History
+==============
+DATE                   CHANGED BY                  DESCRIPTION
+2022-07-07			    mantsou			          Created the framework
+"""
+
+def comparision(df1,df2,join=[],checks=False,apply_numeric=True,output='Comparator_Result',missing_rows_return=False, only_mismatch =False):
+    """
+    This is the main logic of program.
+    This will compare two dataframes column wise and return a third column which shows TRUE/FALSE according to the result of matched value
+    ------------------------------------------------------------------------------------------------------------------
+    df1 and df2 are two parameters to this functions which are both dataframes.
+    join: a list of column names must be common on both dataframes
+    checks=True/False: If True will check for special cases 'Not Collected' and 'NotCollected',etc treat 'Not Collected' and 'NotCollected' equal
+    specially designed for Dexter and DFM
+    checks=False will handle Nan values and check the data exactly as it is
+    apply_numeric: bool True--> will convert all the string convertible numeric values to number.
+    ----------------------------------------------------------------------------------------------------------------
+    returns : Dataframe
+    """
+    if output=='Comparator_Result':
+        if not os.path.exists('Comparator_Result'):
+            os.makedirs('Comparator_Result')
+    
+    def get_rows_missing(df1,df2,merge=[]):
+        """
+        This returns the missing rows between two dataframes and generates excel file for that.
+        ------------------------------------------------------------------------------------
+        Pass two dataframes
+        DF1: dataframe
+        DF2: dataframe
+        merge: a string having same row name in both excel file which are non duplicates
+        ------------------------------------------------------------------------------------
+        """
+        missing=pd.merge(df1,df2,on=merge,how='outer',indicator=True,suffixes=('_1', '_2'))
+        missing_l=missing[missing['_merge']=='left_only'].copy()
+        missing_l.drop('_merge',axis=1,inplace=True)
+        drop_columns=list(set(df1.columns)-set(merge))
+        left=[]
+        for i in range(len(drop_columns)):
+            left.append(drop_columns[i]+'_2')
+        missing_l.drop(left,axis=1,inplace=True)
+        
+        missing_r=missing[missing['_merge']=='right_only'].copy()
+        missing_r.drop('_merge',axis=1,inplace=True)
+        drop_columns=list(set(df1.columns)-set(merge))
+        right=[]
+        for i in range(len(drop_columns)):
+            right.append(drop_columns[i]+'_1')
+        missing_r.drop(right,axis=1,inplace=True)    
+        
+        
+        return missing_l,missing_r
+        
+    def write_result (df,output, mismatch = False):
+        """
+        Writing result of two dataframes to specified output  
+        """
+        print("*********  Generating CSV File  ********")
+        df.to_csv(output +'\\Results_'+datetime.now().strftime('%Y%m%d_%H%M%S') +'.csv',index=False,chunksize=1000)
+        print("****  CSV File Generated **** ")    
+    def write_mismatch_to_excel(df1_mismatch,df2_mismatch,output):
+        print('****** Writing Misssing Rows  *************')
+        Excelwriter = pd.ExcelWriter(output+'\\Missing Rows_'+datetime.now().strftime('%Y%m%d_%H%M%S') +'.xlsx',engine="xlsxwriter")
+        if len(df1_mismatch):
+            df1_mismatch.to_excel(Excelwriter,sheet_name='Sheet1 Present',index=False)
+        if len(df2_mismatch):
+            df2_mismatch.to_excel(Excelwriter,sheet_name='Sheet2 Present',index=False)      
+            
+        Excelwriter.save()    
+        print("********  Missing Rows CSV File Generated  *****")
+    
+    
+    def convert_numeric(x):
+        """
+        Converts the string/object datatype to number if convertible. 
+        Helper function to make sure that '1.0' is equal as '1.00'
+        """
+        try:
+            x = pd.to_numeric(x)
+            if type(x) != bool:
+                return round(x,6)
+        except:
+            return x
+              
+
+#here match is final dataframe which is converted to excel file later
+    match=pd.DataFrame()
+    column_1=list(df1.columns)
+    columns_2=list(df2.columns)
+    
+    # Ensuring the columns in both csv are same 
+    if len(column_1)==len(set(column_1)) and  len(columns_2)==len(set(columns_2)):
+        if set(column_1).intersection(set(columns_2))==set(column_1):
+            temp=pd.merge(df1,df2,on=join,how='inner',suffixes=('_1', '_2'))
+            columns=list(set(column_1)-set(join))
+            for i in join:
+                match[i]=temp[i].copy()
+            for i in columns:
+                if apply_numeric:
+                    # This was converted to numeric because dexter and dfm both has different number representation.
+                    match[i+'_1']=temp[i+'_1'].apply(convert_numeric).copy()
+                    match[i+'_2']=temp[i+'_2'].apply(convert_numeric).copy()
+                else:
+                    match[i+'_1']=temp[i+'_1'].copy()
+                    match[i+'_2']=temp[i+'_2'].copy()   
+                    
+                # No checks Applied    
+                if checks==False:
+                    match[i+'_match']=np.where(np.where(match[i+'_1']==match[i+'_2'],True,False) | \
+                    np.logical_and(pd.isnull(match[i+'_1']), pd.isnull(match[i+'_2'])),True,False)
+                else: 
+                    match[i+'_match']=np.where(np.where(match[i+'_1']==match[i+'_2'],True,False) | \
+                                   np.logical_and(pd.isnull(match[i+'_1']), pd.isnull(match[i+'_2'])) | \
+                                   np.logical_and(match[i+'_1']=='NotCollected',match[i+'_2']=='Not Collected') | \
+                                   np.logical_and(match[i+'_1']=='NotApplicable',match[i+'_2']=='Not Applicable') | \
+                                   np.logical_and(match[i+'_1']=='NotDisclosed',match[i+'_2']=='Not Disclosed') | \
+                                   np.logical_and(match[i+'_1']=='NotMeaningful',match[i+'_2']=='Not Meaningful') | \
+                                   np.logical_and(match[i+'_1']=='NoInformation',match[i+'_2']=='No Information') | \
+                                   np.logical_and(match[i+'_2']=='NotCollected',match[i+'_1']=='Not Collected') | \
+                                   np.logical_and(match[i+'_2']=='NotApplicable',match[i+'_1']=='Not Applicable') | \
+                                   np.logical_and(match[i+'_2']=='NotDisclosed',match[i+'_1']=='Not Disclosed') | \
+                                   np.logical_and(match[i+'_2']=='NotMeaningful',match[i+'_1']=='Not Meaningful') | \
+                                   np.logical_and(match[i+'_2']=='NoInformation',match[i+'_1']=='No Information'),True,False)
+        #   match_columns contains all the columns of comparision     
+            match_columns=[]
+            for i in columns:
+                match_columns.append(i+'_match')
+        #   The below LOC creates a final column and compares whether that row has any false value or not
+            match['final_match']=match.loc[:,match_columns].all(axis=1)
+        #   The below LOC will execute if both the files are same to same.
+            
+            if match['final_match'].all() and len(match)!=0:
+                print("*****  Test Passed Successfully  ******")
+            
+            df1_missing, df2_missing=get_rows_missing(df1,df2,join)
+            if only_mismatch:
+                mismatch = match[match['final_match'] == False]
+                match = mismatch.copy()
+            write_result(match,output)    
+            if len(df1_missing) or len(df2_missing):    
+                write_mismatch_to_excel(df1_missing,df2_missing,output)
+            if missing_rows_return:
+                return match,df1_missing,df2_missing
+            else:
+                return match
+                
+        
+    
+        else:
+            print("*****  TEST FAILED  *****")
+            print("There is mismatch in column names of both the files. The columns having mismatch are: ")
+            print("*****   Columns Present in DF1  *********")
+            print(set(column_1)-set(columns_2))
+            print("*****  Columns Present in DF2   *****")
+            print(set(columns_2)-set(column_1))
+    else:
+        print("*****  TEST FAILED  *****")
+        print("The column name must be unique")
+        
+def exclude_funds(funds,df2):
+    """
+    This function was created to test dexter feature where feed was generated only for issuers and not fund.
+    """
+    drop=list(set(df2['issuerID']).intersection(set((funds['issuerID']))))
+    df2.drop(df2[df2['issuerID'].isin(drop)].index,axis=0,inplace=True)
+    return df2
+
+
+
+if __name__ == "__main__":
+
+
+# Main Objective of this program is to compare two excel files with a specific key which can join two dataframes
+# Make Sure both dataframes have same column names and same column numbers
+# 
+    # df1=pd.read_csv('C:\\ESGD-23.6\\ESGD-880\\Script.csv')
+    # df2=pd.read_csv('C:\\ESGD-23.6\\ESGD-880\\Endpoint.csv')
+    df1 = ESG_API_RESULT
+    df2 = DD_DB_RESULT        
+       
+    # Join on some column name
+    result=comparision(df1,df2,join=['EntityID', 'StartDate','Factors','ParentEntityID'],checks=False,apply_numeric=False,only_mismatch = False)
+    print('********** DONE  ***********')
+    
+    
